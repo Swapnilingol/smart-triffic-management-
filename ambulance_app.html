@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart City Operations - Emergency Map</title>
+    <script>
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            if(typeof buildGrid === 'function' && typeof drawMap === 'function') {
+                ctx.clearRect(0,0,canvas.width,canvas.height);
+                drawMap();
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');
+
+        :root {
+            --bg-body: #e5e7eb;
+            --bg-map: #f3f4f6;
+            --bg-panel: white;
+            --text-heading: #111827;
+            --text-sub: #6b7280;
+            --border-col: #e5e7eb;
+            --bg-box: #f3f4f6;
+            --bg-card: white;
+            --bg-active: #fef2f2;
+            --shadow-panel: rgba(0,0,0,0.1);
+            --border-btn: #d1d5db;
+        }
+        
+        [data-theme="dark"] {
+            --bg-body: #0f172a;
+            --bg-map: #1e293b;
+            --bg-panel: #0f172a;
+            --text-heading: #f8fafc;
+            --text-sub: #94a3b8;
+            --border-col: #334155;
+            --bg-box: #1e293b;
+            --bg-card: #0f172a;
+            --bg-active: rgba(239, 68, 68, 0.1);
+            --shadow-panel: rgba(0,0,0,0.3);
+            --border-btn: #475569;
+        }
+        [data-theme="dark"] .sun-icon { display: none !important; }
+        [data-theme="dark"] .moon-icon { display: block !important; }
+        [data-theme="light"] .sun-icon { display: block !important; }
+        [data-theme="light"] .moon-icon { display: none !important; }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        
+        body {
+            background: var(--bg-body);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Full Screen Map Container */
+        #map-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0; left: 0;
+            background: var(--bg-map);
+        }
+        canvas { position: absolute; top: 0; left: 0; }
+
+        /* Left Hand Google-Maps Style Control Panel */
+        .control-panel {
+            position: absolute;
+            top: 0; left: 0;
+            width: 420px;
+            height: 100vh;
+            background: var(--bg-panel);
+            box-shadow: 5px 0 25px var(--shadow-panel);
+            z-index: 50;
+            padding: 40px 30px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .header {
+            margin-bottom: 40px;
+        }
+        .header h2 { font-weight: 900; font-size: 26px; color: var(--text-heading); letter-spacing: -1px; }
+        .header p { color: var(--text-sub); font-size: 14px; margin-top: 5px;}
+
+        h3 { font-size: 20px; color: var(--text-heading); margin-bottom: 5px; }
+        p.subtitle { color: var(--text-sub); font-size: 14px; margin-bottom: 25px; }
+
+        .location-box {
+            display: flex; align-items: center; background: var(--bg-box);
+            padding: 15px; border-radius: 12px; margin-bottom: 25px; border: 1px solid var(--border-col);
+        }
+        .loc-icon { width: 12px; height: 12px; background: #3b82f6; border-radius: 50%; margin-right: 15px; box-shadow: 0 0 0 4px rgba(59,130,246,0.2);}
+        .loc-text input { border:none; background:transparent; width:100%; font-size: 16px; font-weight: 600; color:var(--text-heading); outline:none;}
+        
+        .type-grid {
+            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px;
+        }
+        .type-card {
+            background: var(--bg-card); border: 2px solid var(--border-col); border-radius: 12px;
+            padding: 20px 10px; text-align: center; cursor: pointer; transition: 0.2s;
+        }
+        .type-card.active { border-color: #ef4444; background: var(--bg-active); }
+        .type-card .icon { font-size: 28px; margin-bottom: 8px; }
+        .type-card .tt { font-size: 13px; font-weight: 700; color: var(--text-heading); }
+
+        .book-btn {
+            width: 100%; background: #f9c935; color: #111827; border: none; padding: 20px;
+            border-radius: 12px; font-size: 18px; font-weight: 900; cursor: pointer;
+            box-shadow: 0 10px 20px rgba(249, 201, 53, 0.3); transition: 0.2s; margin-top: auto;
+        }
+        .book-btn:active { transform: scale(0.97); }
+        .reset-btn { background: #111827; color: white; box-shadow: 0 10px 20px rgba(17, 24, 39, 0.2); display:none; margin-top:20px;}
+
+        /* Driver UI */
+        .driver-card {
+            background: var(--bg-box); border-radius: 16px; padding: 15px; margin: 25px 0 10px 0;
+            display: flex; align-items: center; gap: 15px; border: 1px solid var(--border-col);
+            text-align: left; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .driver-avatar {
+            width: 50px; height: 50px; background: var(--bg-body); border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 28px; border: 2px solid #f9c935;
+        }
+        .driver-details { flex: 1; }
+        .driver-name { font-weight: 900; color: var(--text-heading); font-size: 16px; margin-bottom: 2px;}
+        .driver-rating { font-size: 12px; color: var(--text-sub); font-weight: 700;}
+        .driver-rating span { color: #f9c935; text-shadow: 0 0 2px rgba(249,201,53,0.5);}
+        .vehicle-plate { display: inline-block; background: var(--border-col); padding: 3px 8px; border-radius: 6px; font-weight: 800; font-size: 11px; margin-top: 5px; color:var(--text-heading); letter-spacing: 0.5px;}
+        .call-btn { background: #f9c935; border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 20px; box-shadow: 0 4px 10px rgba(249,201,53,0.4); cursor: pointer;}
+
+        /* Map UI Elements */
+        .ambulance-marker {
+            position: absolute; width: 44px; height: 26px; background: var(--bg-card);
+            border: 3px solid #ef4444; border-radius: 6px; z-index: 10;
+            transition: left 1s linear, top 1s linear, transform 0.3s;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15); margin-top: -13px; margin-left: -22px;
+        }
+        .ambulance-marker::after { content: '+'; color: #ef4444; font-weight: 900; font-size: 18px; }
+
+        .hospital-node {
+            position: absolute; width: 50px; height: 50px; background: var(--bg-card); border-radius: 50%;
+            box-shadow: 0 5px 20px rgba(59, 130, 246, 0.3); z-index: 5; display: flex; align-items: center; justify-content: center;
+            border: 4px solid #93c5fd; margin-top: -25px; margin-left: -25px;
+        }
+        .hospital-node svg { width: 24px; fill: #ef4444; }
+        .hospital-label {
+            position: absolute; bottom: -25px; white-space: nowrap; font-size: 11px;
+            font-weight: 800; color: var(--text-heading); background: var(--bg-panel);
+            padding: 2px 6px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid var(--border-col); pointer-events: none;
+        }
+
+        .user-pin {
+            position: absolute; width: 24px; height: 24px; background: #3b82f6; border-radius: 50%;
+            border: 5px solid white; box-shadow: 0 0 0 15px rgba(59, 130, 246, 0.2); z-index: 6;
+            margin-top: -12px; margin-left: -12px; animation: pulse 2s infinite; display: none;
+        }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); } 70% { box-shadow: 0 0 0 30px rgba(59, 130, 246, 0); } 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); } }
+
+        .pickup-marker {
+            position: absolute; width: 16px; height: 16px; background: #6b7280; border-radius: 50%;
+            border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 4;
+            margin-top: -8px; margin-left: -8px; transition: 0.3s;
+        }
+        .pickup-marker.selected { background: #3b82f6; transform: scale(1.5); z-index: 7; border-color: #dbeafe; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+
+        /* Status UI */
+        .status-view { display: none; text-align: center; flex: 1; align-content: center;}
+        .spinner { width: 60px; height: 60px; border: 5px solid #f3f4f6; border-top: 5px solid #ef4444; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 30px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .eta-time { font-size: 64px; font-weight: 900; color: var(--text-heading); margin: 10px 0;}
+        .eta-label { font-size: 16px; color: var(--text-sub); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 800; }
+        
+        .ai-status {
+            margin-top: 40px; background: #d1fae5; color: #065f46; padding: 20px;
+            border-radius: 12px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 15px;
+            text-align: left; line-height: 1.5;
+        }
+        .ai-dot { width: 14px; height: 14px; background: #10b981; border-radius: 50%; animation: pulse-green 1.5s infinite; flex-shrink: 0;}
+        @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);} 70%{box-shadow:0 0 0 12px rgba(0,0,0,0);} 100%{box-shadow:0 0 0 0 rgba(0,0,0,0);}}
+    </style>
+</head>
+<body>
+    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme" style="position:fixed; top:20px; right:20px; z-index:1000; background:var(--bg-panel); color:var(--text-heading); border:1px solid var(--border-col); border-radius:50%; width:44px; height:44px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 6px rgba(0,0,0,0.1); transition: 0.2s;">
+        <span class="sun-icon" style="font-size:22px;">☀️</span>
+        <span class="moon-icon" style="font-size:22px; display:none;">🌙</span>
+    </button>
+
+    <!-- Vast Map Area -->
+    <div id="map-container">
+        <canvas id="cityMap"></canvas>
+        <div id="pickup-layer"></div> <!-- Selectable Points injected here -->
+        <div id="nodes-layer"></div> <!-- Hospitals & Ambs dynamically injected here -->
+        <div class="user-pin" id="userPin"></div>
+    </div>
+
+    <!-- Google-Maps Style Left Panel -->
+    <div class="control-panel">
+        
+        <div class="header">
+            <h2 style="font-weight: 900; font-size: 32px; color: var(--text-heading); letter-spacing: -1.5px; display:flex; align-items:center; gap:8px;">
+                <div style="background:#ef4444; width:20px; height:20px; border-radius:5px; transform:rotate(45deg); display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:bold;">+</div> SOS MediRoute
+            </h2>
+            <p>Smart City Medical Dispatch Network</p>
+            <button onclick="window.location.href='index.html'" style="margin-top: 15px; padding: 8px 15px; background: transparent; border: 1px solid var(--border-btn); border-radius: 8px; cursor: pointer; color: var(--text-sub); font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; transition: 0.2s;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                Return to Traffic Dashboard
+            </button>
+        </div>
+
+        <!-- Booking View -->
+        <div id="bookingView" style="display:flex; flex-direction:column; flex:1;">
+            <h3>Emergency Dispatch</h3>
+            <p class="subtitle">Select the coordinates and emergency type.</p>
+
+            <div class="location-box" style="margin-bottom: 10px; border-left: 4px solid #f9c935;">
+                <div class="loc-icon" style="background:#111827;"></div>
+                <div class="loc-text" style="width: 100%;">
+                    <input type="text" id="pickupLoc" list="pickupList" onchange="highlightPickupMarker()" style="border:none; background:transparent; width:100%; font-size:16px; font-weight:600; color:var(--text-heading); outline:none;" placeholder="Enter pickup location (e.g. MG Road)">
+                    <datalist id="pickupList"></datalist>
+                </div>
+            </div>
+
+            <div class="location-box" style="border-left: 4px solid #3b82f6;">
+                <div class="loc-icon" style="background:#3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,0.2); display:flex; align-items:center; justify-content:center; color:#ef4444; font-weight:bold; font-size:12px;">+</div>
+                <div class="loc-text" style="width: 100%;">
+                    <div style="font-size:11px; color:#6b7280; font-weight:700; text-transform:uppercase; margin-bottom:2px;">Drop Hospital</div>
+                    <input type="text" id="dropLoc" list="dropList" value="City General" style="border:none; background:transparent; width:100%; font-size:16px; font-weight:600; color:var(--text-heading); outline:none;" placeholder="Enter drop location">
+                    <datalist id="dropList">
+                        <option value="City General"></option>
+                        <option value="Apollo Care"></option>
+                        <option value="St. Mary's Hospital"></option>
+                        <option value="Global Care Medical"></option>
+                        <option value="Fortis Health"></option>
+                        <option value="Mayo Clinic"></option>
+                        <option value="City Cancer Institute"></option>
+                        <option value="LifeLine Specialty"></option>
+                        <option value="Grace Medical Center"></option>
+                        <option value="Horizon Hospital"></option>
+                    </datalist>
+                </div>
+            </div>
+
+            <div class="type-grid">
+                <div class="type-card active" onclick="selType(this)">
+                    <div class="icon">🚗</div>
+                    <div class="tt">Accident</div>
+                </div>
+                <div class="type-card" onclick="selType(this)">
+                    <div class="icon">❤️</div>
+                    <div class="tt">Cardiac</div>
+                </div>
+                <div class="type-card" onclick="selType(this)">
+                    <div class="icon">🔥</div>
+                    <div class="tt">Fire</div>
+                </div>
+            </div>
+
+            <button class="book-btn" onclick="dispatchAmbulance()">
+                🚨 DISPATCH AI AMBULANCE
+            </button>
+        </div>
+
+        <!-- Tracking View -->
+        <div id="trackingView" class="status-view">
+            <div id="loadingState" style="margin-top:50px;">
+                <div class="spinner"></div>
+                <h3>Calculating nearest unit...</h3>
+                <p class="subtitle">Searching Smart City Grid for closest vector</p>
+            </div>
+            
+            <div id="drivingState" style="display:none; text-align:center; padding-top:20px;">
+                <h3>Ambulance Approaching</h3>
+                <div class="eta-time" id="etaTimer">4</div>
+                <div class="eta-label">mins to destination</div>
+
+                <div class="driver-card" id="driverCard">
+                    <!-- Dynamic Driver Info will be injected here -->
+                    <div class="driver-avatar" id="d-avatar">👨🏽‍✈️</div>
+                    <div class="driver-details">
+                        <div class="driver-name" id="d-name">Raman Singh</div>
+                        <div class="driver-rating" id="d-rating"><span>★</span> 4.9 • SOS MediRoute Medical</div>
+                        <div class="vehicle-plate" id="d-plate">MH 12 AB 1234</div>
+                        <div style="font-size: 13px; font-weight: 900; color: #ef4444; margin-top: 5px;">OTP: <span id="d-otp" style="font-size: 16px;">8392</span></div>
+                    </div>
+                    <div class="call-btn">📞</div>
+                </div>
+                
+                <div class="ai-status">
+                    <div class="ai-dot"></div>
+                    <div>
+                        <span style="display:block; font-size: 11px; text-transform:uppercase; color:#047857; margin-bottom:5px;">Network Integration Active</span>
+                        City AI has granted <b>Green Wave</b> signal override priority.
+                    </div>
+                </div>
+
+                <button class="book-btn reset-btn" id="resetBtn" onclick="resetApp()">
+                    ↻ BOOK ANOTHER RIDE
+                </button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // Link up the invisible Smart City browser channel!
+    const channel = new BroadcastChannel('smart_city_network');
+
+    /*-----------------------*/
+    /* DYNAMIC GRID ENGINE   */
+    /*-----------------------*/
+    const canvas = document.getElementById('cityMap');
+    const ctx = canvas.getContext('2d');
+    
+    // We are generating a vast grid that fills the monitor
+    let nodes = [];
+    let roads = [];
+    const GRID_SIZE = 180; 
+    let maxX = window.innerWidth;
+    let maxY = window.innerHeight;
+    let panelWidth = 420; // Ignore panel area for map logic visually, but vehicles can drive under it
+
+    let hospitals = [];
+    let ambulances = [];
+    let accidentNode = null;
+
+    function buildGrid() {
+        nodes = []; roads = []; hospitals = []; ambulances = [];
+        document.getElementById('nodes-layer').innerHTML = ''; // Clear DOM nodes
+
+        canvas.width = maxX;
+        canvas.height = maxY;
+
+        // Create Nodes
+        for(let x = 100; x < maxX + GRID_SIZE; x += GRID_SIZE) {
+            for(let y = 100; y < maxY + GRID_SIZE; y += GRID_SIZE) {
+                nodes.push({x: x, y: y});
+            }
+        }
+
+        // Create Roads
+        for(let x = 100; x < maxX + GRID_SIZE; x += GRID_SIZE) { roads.push([x, 0, x, maxY]); }
+        for(let y = 100; y < maxY + GRID_SIZE; y += GRID_SIZE) { roads.push([0, y, maxX, y]); }
+
+        drawMap();
+
+        // Place Hospitals
+        const hospitalNames = [
+            'City General', 'Apollo Care', "St. Mary's Hospital", 'Global Care Medical', 
+            'Fortis Health', 'Mayo Clinic', 'City Cancer Institute', 'LifeLine Specialty',
+            'Grace Medical Center', 'Horizon Hospital'
+        ];
+        let rightSideNodes = nodes.filter(n => n.x > panelWidth + 150 && n.y > 100 && n.y < maxY - 150);
+        
+        // Shuffle nodes to place hospitals randomly
+        let shuffledNodes = rightSideNodes.sort(() => 0.5 - Math.random());
+        hospitalNames.forEach((name, i) => {
+            if (shuffledNodes[i]) {
+                hospitals.push(createHospital(shuffledNodes[i].x, shuffledNodes[i].y, name));
+            }
+        });
+
+        // Spawn Ambulances (Spawn 5 across the grid)
+        for(let i=0; i<5; i++) {
+            let startNode = nodes[Math.floor(Math.random() * nodes.length)];
+            createAmbulance(startNode.x, startNode.y);
+        }
+    }
+
+    function createHospital(x, y, name) {
+        let el = document.createElement('div');
+        el.className = 'hospital-node';
+        el.title = name;
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+        el.innerHTML = `
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-1.99.9-1.99 2L3 19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1 11h-4v4h-4v-4H6v-4h4V6h4v4h4v4z"/></svg>
+            <div class="hospital-label">${name}</div>
+        `;
+        document.getElementById('nodes-layer').appendChild(el);
+        return {x, y, name};
+    }
+
+    function drawMap() {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        ctx.fillStyle = isDark ? '#1e293b' : '#f3f4f6';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw basic parks dynamically
+        ctx.fillStyle = isDark ? '#064e3b' : '#d1fae5';
+        for(let i=0; i<5; i++) {
+            ctx.fillRect(500 + Math.random()*maxX*0.5, 100 + Math.random()*maxY*0.5, GRID_SIZE, GRID_SIZE*2);
+        }
+
+        // Draw white roads
+        ctx.strokeStyle = isDark ? '#334155' : '#ffffff';
+        ctx.lineWidth = 24;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        roads.forEach(r => { ctx.moveTo(r[0], r[1]); ctx.lineTo(r[2], r[3]); });
+        ctx.stroke();
+
+        // Draw Dashed Lines
+        ctx.strokeStyle = isDark ? '#475569' : '#d1d5db';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([15, 15]);
+        ctx.beginPath();
+        roads.forEach(r => { ctx.moveTo(r[0], r[1]); ctx.lineTo(r[2], r[3]); });
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // Initialize Map Core
+    buildGrid();
+
+    // Auto-resize handler
+    window.addEventListener('resize', () => {
+        maxX = window.innerWidth;
+        maxY = window.innerHeight;
+        buildGrid();
+    });
+
+    /*-----------------------*/
+    /* AMBULANCE ENGINE      */
+    /*-----------------------*/
+    function createAmbulance(startX, startY) {
+        let el = document.createElement('div');
+        el.className = 'ambulance-marker';
+        document.getElementById('nodes-layer').appendChild(el);
+        let amb = { el: el, x: startX, y: startY, isBusy: false };
+        updateAmbPos(amb);
+        ambulances.push(amb);
+        return amb;
+    }
+
+    function updateAmbPos(amb) {
+        amb.el.style.left = amb.x + 'px';
+        amb.el.style.top = amb.y + 'px';
+    }
+
+    // AI Roaming Loop
+    setInterval(() => {
+        ambulances.forEach(amb => {
+            if(amb.isBusy) return;
+            // Pick an adjacent node (same X or same Y, 1 grid away)
+            let adj = nodes.filter(n => (n.x === amb.x && Math.abs(n.y - amb.y) === GRID_SIZE) || (n.y === amb.y && Math.abs(n.x - amb.x) === GRID_SIZE));
+            if(adj.length > 0) {
+                let target = adj[Math.floor(Math.random()*adj.length)];
+                driveTo(amb, target.x, target.y);
+            }
+        });
+    }, 2000);
+
+    function driveTo(amb, tx, ty) {
+        let dx = tx - amb.x; let dy = ty - amb.y;
+        if (dx !== 0 || dy !== 0) {
+            let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            amb.el.style.transform = `rotate(${angle}deg)`;
+        }
+        amb.x = tx; amb.y = ty;
+        updateAmbPos(amb);
+    }
+
+    /*-----------------------*/
+    // Dynamic Address Options Generator
+    let pickupOptions = [];
+
+    function populatePickupLocations() {
+        pickupOptions = [];
+        let listEl = document.getElementById('pickupList');
+        let layerEl = document.getElementById('pickup-layer');
+        listEl.innerHTML = ''; // clear dropdown
+        layerEl.innerHTML = ''; // clear visual markers from map
+
+        const streets = ["MG Road", "Ring Road", "Station Road", "Link Road", "FC Road", "Main Bazaar", "SV Road"];
+        const blocks = ["Sector 14", "Phase 2", "Block C", "Hitech City", "Koramangala", "Andheri West"];
+        
+        let safeNodes = nodes.filter(n => n.x > panelWidth + 100 && n.x < maxX - 100);
+
+        // Generate 5 random pickup locations
+        for(let i=0; i<5; i++) {
+            let addr = Math.floor(Math.random() * 800 + 100) + " " + streets[Math.floor(Math.random()*streets.length)] + ", " + blocks[Math.floor(Math.random()*blocks.length)];
+            let n = safeNodes[Math.floor(Math.random() * safeNodes.length)];
+            pickupOptions.push({ address: addr, node: n });
+            
+            // Render Option in DataList
+            let opt = document.createElement('option');
+            opt.value = addr;
+            listEl.appendChild(opt);
+
+            // Render physical pin on the map
+            let pin = document.createElement('div');
+            pin.className = 'pickup-marker';
+            pin.style.left = n.x + 'px';
+            pin.style.top = n.y + 'px';
+            // Store mapping safely on the visual object itself
+            pin.setAttribute('data-addr', addr);
+            layerEl.appendChild(pin);
+        }
+
+        // Auto-fill input with the first random option by default to prompt user
+        document.getElementById('pickupLoc').value = pickupOptions[0].address;
+        highlightPickupMarker();
+    }
+
+    function highlightPickupMarker() {
+        let selectedAddr = document.getElementById('pickupLoc').value;
+        let markers = document.querySelectorAll('.pickup-marker');
+        markers.forEach(m => {
+            if(m.getAttribute('data-addr') === selectedAddr) {
+                m.classList.add('selected');
+            } else {
+                m.classList.remove('selected');
+            }
+        });
+    }
+
+    /*-----------------------*/
+    /* APP BOOKING LOGIC     */
+    /*-----------------------*/
+    // Setup initial address dropdown
+    setTimeout(populatePickupLocations, 500);
+
+    function selType(el) {
+        document.querySelectorAll('.type-card').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+    }
+
+    function dispatchAmbulance() {
+        // --> TRIGGER TABS <--
+        channel.postMessage('DISPATCH_AMBULANCE');
+
+        document.getElementById('bookingView').style.display = 'none';
+        document.getElementById('trackingView').style.display = 'block';
+
+        // Retrieve exactly which address the user typed OR picked
+        let selectedAddr = document.getElementById('pickupLoc').value;
+        let mapping = pickupOptions.find(p => p.address === selectedAddr);
+        
+        // If the user typed a COMPLETELY custom string, we will magically map it to a random geographical node in the city so the simulation continues flawlessly!
+        if (mapping) {
+            accidentNode = mapping.node;
+        } else {
+            let safeNodes = nodes.filter(n => n.x > panelWidth + 100 && n.x < maxX - 100);
+            accidentNode = safeNodes[Math.floor(Math.random() * safeNodes.length)];
+        }
+        
+        // Hide the marker points during the actual drive animation
+        document.getElementById('pickup-layer').innerHTML = '';
+        
+        let pin = document.getElementById('userPin');
+        pin.style.left = accidentNode.x + 'px';
+        pin.style.top = accidentNode.y + 'px';
+        pin.style.display = 'block';
+
+        // Which hospital was selected?
+        let selectedHospitalName = document.getElementById('dropLoc').value;
+
+        setTimeout(() => {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('drivingState').style.display = 'block';
+
+            // Random Driver Data for Accidents (Indian Male Profiles)
+            const driverDatabase = [
+                { name: "Arjun Deshmukh", rating: "4.9", avatar: "👨🏽‍✈️", plate: "MH 12 QX 4521", otp: Math.floor(1000 + Math.random() * 9000) },
+                { name: "Rahul Sharma", rating: "4.8", avatar: "👨🏻‍⚕️", plate: "DL 08 CA 1102", otp: Math.floor(1000 + Math.random() * 9000) },
+                { name: "Sandeep Nair", rating: "4.7", avatar: "👨🏾‍✈️", plate: "KL 07 BN 9982", otp: Math.floor(1000 + Math.random() * 9000) },
+                { name: "Jaswinder Singh", rating: "4.9", avatar: "👳🏽‍♂️", plate: "PB 10 AS 3345", otp: Math.floor(1000 + Math.random() * 9000) },
+                { name: "Karthik Raja", rating: "4.6", avatar: "👨🏾‍⚕️", plate: "TN 01 FG 1099", otp: Math.floor(1000 + Math.random() * 9000) }
+            ];
+
+            const driver = driverDatabase[Math.floor(Math.random() * driverDatabase.length)];
+            document.getElementById('d-name').innerText = driver.name;
+            document.getElementById('d-rating').innerHTML = `<span>★</span> ${driver.rating} • SOS MediRoute Medical`;
+            document.getElementById('d-avatar').innerText = driver.avatar;
+            document.getElementById('d-plate').innerText = driver.plate;
+            document.getElementById('d-otp').innerText = driver.otp;
+
+            let available = ambulances.filter(a => !a.isBusy);
+            let activeAmb;
+            
+            if (available.length > 0) {
+                // Find the nearest ambulance using Manhattan distance (driving distance on grid)
+                activeAmb = available.reduce((prev, curr) => {
+                    let prevDist = Math.abs(prev.x - accidentNode.x) + Math.abs(prev.y - accidentNode.y);
+                    let currDist = Math.abs(curr.x - accidentNode.x) + Math.abs(curr.y - accidentNode.y);
+                    return (currDist < prevDist) ? curr : prev;
+                });
+            } else {
+                activeAmb = ambulances[0];
+            }
+            activeAmb.isBusy = true; 
+
+            // Draw direct GPS line
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(activeAmb.x, activeAmb.y);
+            
+            // L-Shape routing logic matching the grid lines!
+            ctx.lineTo(activeAmb.x, accidentNode.y); 
+            ctx.lineTo(accidentNode.x, accidentNode.y);
+            ctx.stroke();
+
+            // Drive sequence (L-Shape) dynamically matching time to distance!
+            let dist = Math.abs(activeAmb.x - accidentNode.x) + Math.abs(activeAmb.y - accidentNode.y);
+            // Calculate a realistic time: roughly 1 min per 100px traveled
+            let timer = Math.max(Math.ceil(dist / 100), 2); // minimum 2 mins
+            
+            // Adjust visual drive speed to match timer length so it looks realistic
+            activeAmb.el.style.transition = `left ${timer/2}s linear, top ${timer/2}s linear, transform 0.3s`;
+
+            driveTo(activeAmb, activeAmb.x, accidentNode.y); // move vertically
+            setTimeout(() => {
+                driveTo(activeAmb, accidentNode.x, accidentNode.y); // move horizontally
+            }, (timer/2) * 1000); 
+
+            // Countdown ticker logic
+            document.getElementById('etaTimer').innerText = timer;
+            let iv = setInterval(() => {
+                timer--;
+                document.getElementById('etaTimer').innerText = timer;
+                if (timer <= 0) {
+                    clearInterval(iv);
+                    document.getElementById('etaTimer').innerText = "Arrived";
+                    document.querySelector('.eta-label').innerText = "at scene";
+                    setTimeout(() => routeToHospital(activeAmb, selectedHospitalName), 2000);
+                }
+            }, 1000); 
+        }, 1500);
+    }
+
+    function routeToHospital(amb, hospitalName) {
+        // Map selected hospital to physical node
+        let targetH = hospitals.find(h => h.name === hospitalName);
+        if(!targetH) targetH = hospitals[0]; // fallback
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawMap(); 
+
+        ctx.setLineDash([10, 5]);
+        ctx.strokeStyle = '#10b981'; // Green Wave!
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(amb.x, amb.y);
+        ctx.lineTo(amb.x, targetH.y);
+        ctx.lineTo(targetH.x, targetH.y);
+        ctx.stroke();
+
+        let targetDist = Math.abs(amb.x - targetH.x) + Math.abs(amb.y - targetH.y);
+        let returnTimer = Math.max(Math.ceil(targetDist / 100), 2);
+
+        // Adjust visual drive speed
+        amb.el.style.transition = `left ${returnTimer/2}s linear, top ${returnTimer/2}s linear, transform 0.3s`;
+
+        driveTo(amb, amb.x, targetH.y);
+        setTimeout(() => {
+            driveTo(amb, targetH.x, targetH.y);
+            setTimeout(() => {
+                document.getElementById('etaTimer').innerText = "Arrived";
+                document.getElementById('resetBtn').style.display = 'block';
+            }, (returnTimer/2) * 1000 + 500);
+        }, (returnTimer/2) * 1000);
+
+        document.getElementById('etaTimer').innerText = "Routing";
+        document.querySelector('.eta-label').innerText = `to ${hospitalName}`;
+    }
+
+    function resetApp() {
+        document.getElementById('trackingView').style.display = 'none';
+        document.getElementById('bookingView').style.display = 'flex';
+        document.getElementById('resetBtn').style.display = 'none';
+        document.getElementById('drivingState').style.display = 'none';
+        document.getElementById('loadingState').style.display = 'block';
+        document.getElementById('userPin').style.display = 'none';
+
+        // Re-generate a fresh batch of addresses on reset
+        populatePickupLocations();
+
+        ambulances.forEach(a => { 
+            a.isBusy = false; 
+            a.el.style.transition = 'left 1s linear, top 1s linear, transform 0.3s'; // reset to roam speed
+        });
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawMap();
+    }
+</script>
+
+</body>
+</html>
